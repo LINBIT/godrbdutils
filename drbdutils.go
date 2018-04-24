@@ -45,8 +45,8 @@ type DrbdAdm struct {
 	timeout time.Duration
 }
 
-func NewDrbdAdm(res []string) (*DrbdAdm, error) {
-	return &DrbdAdm{res: res}, nil
+func NewDrbdAdm(res []string) *DrbdAdm {
+	return &DrbdAdm{res: res}
 }
 
 func (a *DrbdAdm) Up(arg ...string) ([]byte, error) {
