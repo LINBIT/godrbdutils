@@ -10,9 +10,10 @@ import (
 )
 
 type host struct {
-	id   int // DRBD node-id
-	name string
-	ip   string
+	id     int // DRBD node-id
+	name   string
+	ip     string
+	volume map[int]volume // key: volume ID
 }
 
 // Volume is a DRBD volume
@@ -24,36 +25,35 @@ type volume struct {
 
 // Resource is a DRBD resource
 type Resource struct {
-	name   string
-	port   int
-	volume []volume
-	host   []host
+	name string
+	port int
+	host map[string]host // key: hostname
 
 	sync.Mutex
 }
 
 // NewResource returns a new DRBD resource object
 func NewResource(name string, port int) *Resource {
-	return &Resource{name: name, port: port}
+	return &Resource{name: name, port: port, host: make(map[string]host)}
 }
 
-func checkVolumes(r *Resource, v volume) error {
-	for _, rv := range r.volume {
-		if rv.id == v.id {
-			return fmt.Errorf("Resource '%s' already contains volume with ID: '%d'", r.name, v.id)
+func checkVolumes(h host, v volume) error {
+	for _, hv := range h.volume {
+		if hv.id == v.id {
+			return fmt.Errorf("Host '%s' already has a volume with ID: '%d'", h.name, v.id)
 		}
-		if rv.backingDevice == v.backingDevice {
-			return fmt.Errorf("Resource '%s' already contains volume with Name: '%s'", r.name, v.backingDevice)
+		if hv.backingDevice == v.backingDevice {
+			return fmt.Errorf("Host '%s' already has a volume with Name: '%s'", h.name, v.backingDevice)
 		}
-		if rv.minor == v.minor {
-			return fmt.Errorf("Resource '%s' already contains volume with Minor: '%d'", r.name, v.minor)
+		if hv.minor == v.minor {
+			return fmt.Errorf("Host '%s' already has a volume with Minor: '%d'", h.name, v.minor)
 		}
 	}
 	return nil
 }
 
 // AddVolume adds DRBD volume information to a resource
-func (r *Resource) AddVolume(id, minor int, backingDevice string) error {
+func (r *Resource) AddVolume(id, minor int, backingDevice, hostname string) error {
 	v := volume{
 		id:            id,
 		minor:         minor,
@@ -63,10 +63,17 @@ func (r *Resource) AddVolume(id, minor int, backingDevice string) error {
 	r.Lock()
 	defer r.Unlock()
 
-	if err := checkVolumes(r, v); err != nil {
+	host, ok := r.host[hostname]
+	if !ok {
+		return fmt.Errorf("Could not find existing host with hostname: %v", hostname)
+	}
+
+	if err := checkVolumes(host, v); err != nil {
 		return err
 	}
-	r.volume = append(r.volume, v)
+
+	host.volume[id] = v
+	r.host[hostname] = host
 
 	return nil
 }
@@ -74,7 +81,7 @@ func (r *Resource) AddVolume(id, minor int, backingDevice string) error {
 func checkHosts(r *Resource, h host) error {
 	for _, rh := range r.host {
 		if rh.id == h.id {
-			return fmt.Errorf("Resource '%s' already contains host with ID: '%d'", r.name, h.id)
+			return fmt.Errorf("Resource '%s' already contains host with Node-ID: '%d'", r.name, h.id)
 		}
 		if rh.name == h.name {
 			return fmt.Errorf("Resource '%s' already contains host with Name: '%s'", r.name, h.name)
@@ -87,11 +94,12 @@ func checkHosts(r *Resource, h host) error {
 }
 
 // AddHost adds a host information to a resource
-func (r *Resource) AddHost(id int, name, ip string) error {
+func (r *Resource) AddHost(id int, hostname, ip string) error {
 	h := host{
-		id:   id,
-		name: name,
-		ip:   ip,
+		id:     id,
+		name:   hostname,
+		ip:     ip,
+		volume: make(map[int]volume),
 	}
 
 	r.Lock()
@@ -100,7 +108,7 @@ func (r *Resource) AddHost(id int, name, ip string) error {
 	if err := checkHosts(r, h); err != nil {
 		return err
 	}
-	r.host = append(r.host, h)
+	r.host[hostname] = h
 
 	return nil
 }
@@ -128,7 +136,7 @@ func (r *Resource) WriteConfig(filename string) error {
 		b.WriteString(indentf(1, "on %s {\n", h.name))
 		b.WriteString(indentf(2, "node-id %d;\n", h.id))
 		b.WriteString(indentf(2, "address %s:%d;\n", h.ip, r.port))
-		for _, v := range r.volume {
+		for _, v := range h.volume {
 			b.WriteString(indentf(2, "volume %d {\n", v.id))
 			b.WriteString(indentf(3, "device minor %d;\n", v.minor))
 			b.WriteString(indentf(3, "disk %s;\n", v.backingDevice))
