@@ -25,18 +25,29 @@ func GetNumber(min, max int, used []int) (int, error) {
 	// use the next after current max if possible
 	curMax := used[len(used)-1]
 	if curMax < max {
-		return curMax + 1, nil
+		nr := curMax + 1
+		if nr < min {
+			nr = min
+		}
+		return nr, nil
 	}
 
 	// find a hole
-	for i := 0; i < len(used)-1; i++ {
-		cur := used[i]
-		if used[i+1]-cur > 1 { // found hole
-			candidate := cur + 1
-			if candidate >= min && candidate <= max {
-				return candidate, nil
-			}
+	i := 0
+	for i < len(used) && used[i] < min {
+		i++
+	}
+	expected := min
+	for i < len(used) {
+		if used[i] - expected > 0 {
+			// found an unused number
+			return expected, nil
 		}
+		if used[i] >= max {
+			break
+		}
+		expected = used[i] + 1
+		i++
 	}
 
 	return -1, errors.New("Could not find a free number")
